@@ -1,5 +1,5 @@
 //@version=6
-indicator("PSM V4 | Market Intelligence + Entry / SL / TP", shorttitle="PSM V4", overlay=true, max_labels_count=200)
+indicator("PSM V4 | Market Intelligence + Entry / SL / TP", shorttitle="PSM V4", overlay=true, max_labels_count=200, max_lines_count=200)
 
 // PSM V4 Pine-only indicator. It runs on the active TradingView chart and broker symbol.
 // A confirmed-candle, rules-based market-structure model; not AI, not auto-execution.
@@ -26,6 +26,7 @@ rr2 = input.float(2.0, "TP2 R multiple", minval=0.5, step=0.25, group=groupRisk)
 rr3 = input.float(3.0, "TP3 R multiple", minval=0.75, step=0.25, group=groupRisk)
 cooldown = input.int(8, "Minimum bars between signals", minval=0, group=groupRisk)
 showLabels = input.bool(true, "Draw plan price labels", group=groupRisk)
+showHistory = input.bool(false, "Keep old trade lines", group=groupRisk)
 
 // Core observations.
 fastEMA = ta.ema(close, fastLen)
@@ -86,6 +87,18 @@ var bool hitTP3 = false
 var string planStatus = "WAIT"
 var int planBar = na
 
+// Drawing references; each active setup uses anchored horizontal objects.
+var line entryLine = na
+var line stopLine = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var label entryLabel = na
+var label stopLabel = na
+var label tp1Label = na
+var label tp2Label = na
+var label tp3Label = na
+
 if longSignal or shortSignal
     side := longSignal ? 1 : -1
     entry := close
@@ -100,12 +113,43 @@ if longSignal or shortSignal
     planStatus := longSignal ? "BUY SETUP" : "SELL SETUP"
     planBar := bar_index
     lastSignalBar := bar_index
+    // Remove the previous setup's line objects by default.
+    // These objects are anchored by bar_index and PRICE, not continuous plot steplines.
+    if not showHistory
+        if not na(entryLine)
+            line.delete(entryLine)
+        if not na(stopLine)
+            line.delete(stopLine)
+        if not na(tp1Line)
+            line.delete(tp1Line)
+        if not na(tp2Line)
+            line.delete(tp2Line)
+        if not na(tp3Line)
+            line.delete(tp3Line)
+        if not na(entryLabel)
+            label.delete(entryLabel)
+        if not na(stopLabel)
+            label.delete(stopLabel)
+        if not na(tp1Label)
+            label.delete(tp1Label)
+        if not na(tp2Label)
+            label.delete(tp2Label)
+        if not na(tp3Label)
+            label.delete(tp3Label)
+
+    // Draw a new FIVE-line plan originating at the actual signal candle.
+    entryLine := line.new(bar_index, entry, bar_index + 1, entry, xloc=xloc.bar_index, extend=extend.right, color=color.white, width=2)
+    stopLine := line.new(bar_index, stop, bar_index + 1, stop, xloc=xloc.bar_index, extend=extend.right, color=color.red, width=2)
+    tp1Line := line.new(bar_index, tp1, bar_index + 1, tp1, xloc=xloc.bar_index, extend=extend.right, color=color.lime, width=2)
+    tp2Line := line.new(bar_index, tp2, bar_index + 1, tp2, xloc=xloc.bar_index, extend=extend.right, color=color.green, width=2)
+    tp3Line := line.new(bar_index, tp3, bar_index + 1, tp3, xloc=xloc.bar_index, extend=extend.right, color=color.teal, width=2)
+
     if showLabels
-        label.new(bar_index, entry, (longSignal ? "BUY " : "SELL ") + "ENTRY " + str.tostring(entry, format.mintick), style=label.style_label_left, color=longSignal ? color.teal : color.red, textcolor=color.white, size=size.small)
-        label.new(bar_index, stop, "SL " + str.tostring(stop, format.mintick), style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
-        label.new(bar_index, tp1, "TP1 " + str.tostring(tp1, format.mintick), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
-        label.new(bar_index, tp2, "TP2 " + str.tostring(tp2, format.mintick), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
-        label.new(bar_index, tp3, "TP3 " + str.tostring(tp3, format.mintick), style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        entryLabel := label.new(bar_index, entry, (longSignal ? "BUY " : "SELL ") + "ENTRY " + str.tostring(entry, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=longSignal ? color.teal : color.red, textcolor=color.white, size=size.small)
+        stopLabel := label.new(bar_index, stop, "SL " + str.tostring(stop, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
+        tp1Label := label.new(bar_index, tp1, "TP1 " + str.tostring(tp1, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp2Label := label.new(bar_index, tp2, "TP2 " + str.tostring(tp2, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp3Label := label.new(bar_index, tp3, "TP3 " + str.tostring(tp3, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.teal, textcolor=color.white, size=size.tiny)
 
 // Avoid retroactively declaring fills: the plan starts from the FOLLOWING candle.
 // Where a single bar touches SL and TP, conservatively count the stop first.
@@ -132,11 +176,6 @@ if barstate.isconfirmed
 
 plot(showEMAs ? fastEMA : na, "Fast EMA", color=color.new(color.aqua, 15))
 plot(showEMAs ? slowEMA : na, "Slow EMA", color=color.new(color.orange, 10))
-plot(entry, "Entry", color=color.new(color.white, 0), style=plot.style_stepline, linewidth=2)
-plot(stop, "Stop Loss", color=color.new(color.red, 0), style=plot.style_stepline, linewidth=2)
-plot(tp1, "TP1", color=color.new(color.lime, 0), style=plot.style_stepline)
-plot(tp2, "TP2", color=color.new(color.green, 0), style=plot.style_stepline)
-plot(tp3, "TP3", color=color.new(color.teal, 0), style=plot.style_stepline)
 plotshape(longSignal, title="BUY setup", text="BUY", style=shape.labelup, location=location.belowbar, color=color.teal, textcolor=color.white, size=size.tiny)
 plotshape(shortSignal, title="SELL setup", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny)
 
