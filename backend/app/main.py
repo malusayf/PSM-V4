@@ -79,8 +79,3 @@ def intelligence(symbol: str, timeframe: str = "5m"):
         "decision": "WAIT",
         "message": "Market data is not connected. No trading assessment is available.",
     }
-
-
-@app.get("/{debug_path:path}")
-def debug_route(debug_path: str):
-    return {"error": "unknown_path", "received_path": debug_path}
