@@ -1,10 +1,12 @@
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Literal
 
 app = FastAPI(title="PSM V4 Intelligence API", version="0.1.0")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3000"], allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
+allowed_origins = [origin.strip() for origin in os.getenv("PSM_ALLOWED_ORIGINS", "http://localhost:3000").split(",") if origin.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
 
 INSTRUMENTS = [
     {"symbol": "XAUUSD", "name": "Gold / US Dollar", "market": "metals"},
