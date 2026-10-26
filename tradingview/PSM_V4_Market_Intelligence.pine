@@ -1,9 +1,10 @@
 //@version=6
-indicator("PSM V4 | Market Intelligence + Entry / SL / TP", shorttitle="PSM V4", overlay=true, max_labels_count=200, max_lines_count=200)
+indicator("PSM V4.1 | Candle Scale Sync", shorttitle="PSM V4.1", overlay=true, scale=scale.none, max_labels_count=200, max_lines_count=200)
 
 // PSM V4 Pine-only indicator. It runs on the active TradingView chart and broker symbol.
 // A confirmed-candle, rules-based market-structure model; not AI, not auto-execution.
 // Entry is the signal candle close (reference price), NOT a guaranteed fill.
+// scale.none shares the main price scale; existing UI-pinned scale settings can override it.
 // Higher-timeframe EMA is fetched from the LAST CONFIRMED HTF bar.
 
 groupMarket = "Market Understanding"
@@ -27,6 +28,7 @@ rr3 = input.float(3.0, "TP3 R multiple", minval=0.75, step=0.25, group=groupRisk
 cooldown = input.int(8, "Minimum bars between signals", minval=0, group=groupRisk)
 showLabels = input.bool(true, "Draw plan price labels", group=groupRisk)
 showHistory = input.bool(false, "Keep old trade lines", group=groupRisk)
+showClosed = input.bool(false, "Keep levels after SL / TP3 hit", group=groupRisk)
 
 // Core observations.
 fastEMA = ta.ema(close, fastLen)
@@ -173,6 +175,42 @@ if barstate.isconfirmed
             planStatus := "TP2 HIT (bar test)"
         else if hitTP1
             planStatus := "TP1 HIT (bar test)"
+
+
+// Hide the old plan after it completes. This prevents a stale 3989 entry from
+// appearing as though it belongs to the current candle at a different price.
+closedNow = barstate.isconfirmed and (stoppedNow or tp3Now)
+if closedNow and not showClosed and not showHistory
+    if not na(entryLine)
+        line.delete(entryLine)
+        entryLine := na
+    if not na(stopLine)
+        line.delete(stopLine)
+        stopLine := na
+    if not na(tp1Line)
+        line.delete(tp1Line)
+        tp1Line := na
+    if not na(tp2Line)
+        line.delete(tp2Line)
+        tp2Line := na
+    if not na(tp3Line)
+        line.delete(tp3Line)
+        tp3Line := na
+    if not na(entryLabel)
+        label.delete(entryLabel)
+        entryLabel := na
+    if not na(stopLabel)
+        label.delete(stopLabel)
+        stopLabel := na
+    if not na(tp1Label)
+        label.delete(tp1Label)
+        tp1Label := na
+    if not na(tp2Label)
+        label.delete(tp2Label)
+        tp2Label := na
+    if not na(tp3Label)
+        label.delete(tp3Label)
+        tp3Label := na
 
 plot(showEMAs ? fastEMA : na, "Fast EMA", color=color.new(color.aqua, 15))
 plot(showEMAs ? slowEMA : na, "Slow EMA", color=color.new(color.orange, 10))
