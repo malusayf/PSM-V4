@@ -1,10 +1,11 @@
 //@version=6
-indicator("PSM V4.1 | Candle Scale Sync", shorttitle="PSM V4.1", overlay=true, scale=scale.none, max_labels_count=200, max_lines_count=200)
+indicator("PSM V4.2 | Candle Scale Sync", shorttitle="PSM V4.2", overlay=true, max_labels_count=200, max_lines_count=200)
 
 // PSM V4 Pine-only indicator. It runs on the active TradingView chart and broker symbol.
 // A confirmed-candle, rules-based market-structure model; not AI, not auto-execution.
 // Entry is the signal candle close (reference price), NOT a guaranteed fill.
-// scale.none shares the main price scale; existing UI-pinned scale settings can override it.
+// No explicit scale argument: share the price chart scale on a NEW indicator instance.
+// The chart UI can override this; choose Pin to Scale > Same scale as candles.
 // Higher-timeframe EMA is fetched from the LAST CONFIRMED HTF bar.
 
 groupMarket = "Market Understanding"
@@ -17,6 +18,7 @@ useHTF = input.bool(true, "Filter with higher timeframe", group=groupMarket)
 htf = input.timeframe("60", "Higher timeframe", group=groupMarket)
 showEMAs = input.bool(true, "Plot EMAs", group=groupMarket)
 showPanel = input.bool(true, "Market status panel", group=groupMarket)
+showAlignmentTest = input.bool(false, "Alignment test: mark actual candle closes", group=groupMarket)
 
 groupRisk = "Trade Plan (Illustrative)"
 atrLen = input.int(14, "ATR length", minval=2, group=groupRisk)
@@ -212,6 +214,7 @@ if closedNow and not showClosed and not showHistory
         label.delete(tp3Label)
         tp3Label := na
 
+plot(showAlignmentTest ? close : na, "Scale test (must touch candle closes)", color=color.fuchsia, style=plot.style_circles, linewidth=3)
 plot(showEMAs ? fastEMA : na, "Fast EMA", color=color.new(color.aqua, 15))
 plot(showEMAs ? slowEMA : na, "Slow EMA", color=color.new(color.orange, 10))
 plotshape(longSignal, title="BUY setup", text="BUY", style=shape.labelup, location=location.belowbar, color=color.teal, textcolor=color.white, size=size.tiny)
