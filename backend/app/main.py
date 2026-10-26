@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from typing import Literal
 
 app = FastAPI(title="PSM V4 Intelligence API", version="0.1.0")
-allowed_origins = [origin.strip() for origin in os.getenv("PSM_ALLOWED_ORIGINS", "http://localhost:3000").split(",") if origin.strip()]
+allowed_origins = [origin.strip() for origin in os.getenv("PSM_ALLOWED_ORIGINS", "http://localhost:3000,https://psm-v4.vercel.app,https://psm-v4-knightshadeops-projects.vercel.app").split(",") if origin.strip()]
 app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_credentials=False, allow_methods=["GET", "POST", "DELETE"], allow_headers=["*"])
 
 INSTRUMENTS = [
