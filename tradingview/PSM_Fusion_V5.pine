@@ -1,0 +1,418 @@
+//@version=6
+indicator("PSM Fusion V5 | Trading + Crypto Investor", shorttitle="PSM Fusion V5", overlay=true, max_labels_count=200, max_lines_count=200, max_boxes_count=12)
+
+// PSM V4 Pine-only indicator. It runs on the active TradingView chart and broker symbol.
+// A confirmed-candle, rules-based market-structure model; not AI, not auto-execution.
+// Entry is the signal candle close (reference price), NOT a guaranteed fill.
+// No explicit scale argument: share the price chart scale on a NEW indicator instance.
+// The chart UI can override this; choose Pin to Scale > Same scale as candles.
+// Higher-timeframe EMA is fetched from the LAST CONFIRMED HTF bar.
+
+
+// MODE SWITCH: Trading is intentionally the untouched default experience.
+modeGroup = "Fusion Mode"
+fusionMode = input.string("PSM Trading", "Mode", options=["PSM Trading", "PSM Crypto Investor"], group=modeGroup)
+tradingMode = fusionMode == "PSM Trading"
+investorMode = fusionMode == "PSM Crypto Investor"
+
+groupMarket = "Market Understanding"
+fastLen = input.int(21, "Fast EMA", minval=2, group=groupMarket)
+slowLen = input.int(55, "Slow EMA", minval=3, group=groupMarket)
+rsiLen = input.int(14, "Momentum RSI length", minval=2, group=groupMarket)
+pivotLen = input.int(3, "Confirmed swing strength", minval=1, maxval=20, group=groupMarket)
+lookback = input.int(35, "Stop structure lookback", minval=5, maxval=200, group=groupMarket)
+useHTF = input.bool(true, "Filter with higher timeframe", group=groupMarket)
+htf = input.timeframe("60", "Higher timeframe", group=groupMarket)
+showEMAs = input.bool(true, "Plot EMAs", group=groupMarket)
+showPanel = input.bool(true, "Market status panel", group=groupMarket)
+showAlignmentTest = input.bool(false, "Alignment test: mark actual candle closes", group=groupMarket)
+
+groupRisk = "Trade Plan (Illustrative)"
+atrLen = input.int(14, "ATR length", minval=2, group=groupRisk)
+atrMult = input.float(1.5, "Minimum stop (ATR units)", minval=0.2, step=0.1, group=groupRisk)
+maxStopATR = input.float(6.0, "Max accepted stop (ATR units)", minval=0.5, step=0.5, group=groupRisk)
+rr1 = input.float(1.0, "TP1 R multiple", minval=0.25, step=0.25, group=groupRisk)
+rr2 = input.float(2.0, "TP2 R multiple", minval=0.5, step=0.25, group=groupRisk)
+rr3 = input.float(3.0, "TP3 R multiple", minval=0.75, step=0.25, group=groupRisk)
+cooldown = input.int(8, "Minimum bars between signals", minval=0, group=groupRisk)
+showLabels = input.bool(true, "Draw plan price labels", group=groupRisk)
+showHistory = input.bool(false, "Keep old trade lines", group=groupRisk)
+showClosed = input.bool(false, "Keep levels after SL / TP3 hit", group=groupRisk)
+
+
+groupInvestor = "Crypto Investor — Confirmed Higher Timeframe"
+investTF = input.timeframe("D", "Investor analysis timeframe", group=groupInvestor)
+investFastLen = input.int(50, "Long-term EMA (fast)", minval=5, group=groupInvestor)
+investSlowLen = input.int(200, "Long-term EMA (slow)", minval=20, group=groupInvestor)
+investRSILen = input.int(14, "Investor RSI", minval=5, group=groupInvestor)
+investATRLen = input.int(14, "Investor ATR", minval=5, group=groupInvestor)
+investBaseBars = input.int(60, "Support lookback (investor bars)", minval=10, maxval=250, group=groupInvestor)
+investBandATR = input.float(0.7, "Entry zone half-width (ATR)", minval=0.1, maxval=3.0, step=0.1, group=groupInvestor)
+investStopATR = input.float(1.0, "Hard invalidation buffer (ATR)", minval=0.1, maxval=5.0, step=0.1, group=groupInvestor)
+investZoneWidth = input.int(65, "Chart zone width (bars)", minval=10, maxval=180, group=groupInvestor)
+showInvestorZones = input.bool(true, "Show investor zones", group=groupInvestor)
+showInvestorPanel = input.bool(true, "Show investor decision dashboard", group=groupInvestor)
+
+// Core observations.
+fastEMA = ta.ema(close, fastLen)
+slowEMA = ta.ema(close, slowLen)
+momentum = ta.rsi(close, rsiLen)
+atr = ta.atr(atrLen)
+pivotHi = ta.pivothigh(high, pivotLen, pivotLen)
+pivotLo = ta.pivotlow(low, pivotLen, pivotLen)
+var float lastSwingHi = na
+var float lastSwingLo = na
+if not na(pivotHi)
+    lastSwingHi := pivotHi
+if not na(pivotLo)
+    lastSwingLo := pivotLo
+
+// Last confirmed HTF bar avoids using a still-forming HTF candle.
+htfClose = request.security(syminfo.tickerid, htf, close[1], lookahead=barmerge.lookahead_on)
+htfEMA = request.security(syminfo.tickerid, htf, ta.ema(close, slowLen)[1], lookahead=barmerge.lookahead_on)
+chartSecs = timeframe.in_seconds()
+higherSecs = timeframe.in_seconds(htf)
+htfValid = not useHTF or (not na(chartSecs) and not na(higherSecs) and higherSecs > chartSecs)
+htfBull = not useHTF or (htfValid and not na(htfEMA) and htfClose > htfEMA)
+htfBear = not useHTF or (htfValid and not na(htfEMA) and htfClose < htfEMA)
+
+localBull = fastEMA > slowEMA and close > slowEMA and momentum >= 52
+localBear = fastEMA < slowEMA and close < slowEMA and momentum <= 48
+
+// Only react to a breakout of a PREVIOUSLY CONFIRMED swing.
+breakUp = not na(lastSwingHi) and close > lastSwingHi and close[1] <= lastSwingHi
+breakDown = not na(lastSwingLo) and close < lastSwingLo and close[1] >= lastSwingLo
+
+// Suggested structural stops, backed up by an ATR minimum distance.
+structureLong = ta.lowest(low, lookback)[1]
+structureShort = ta.highest(high, lookback)[1]
+stopLongCandidate = math.min(nz(structureLong, close - atr * atrMult), close - atr * atrMult)
+stopShortCandidate = math.max(nz(structureShort, close + atr * atrMult), close + atr * atrMult)
+riskLong = close - stopLongCandidate
+riskShort = stopShortCandidate - close
+longRiskOK = not na(atr) and atr > 0 and riskLong > syminfo.mintick and riskLong <= atr * maxStopATR
+shortRiskOK = not na(atr) and atr > 0 and riskShort > syminfo.mintick and riskShort <= atr * maxStopATR
+
+var int lastSignalBar = na
+ready = na(lastSignalBar) or bar_index - lastSignalBar > cooldown
+longSignal = tradingMode and barstate.isconfirmed and ready and htfValid and localBull and htfBull and breakUp and longRiskOK
+shortSignal = tradingMode and barstate.isconfirmed and ready and htfValid and localBear and htfBear and breakDown and shortRiskOK
+
+// One active reference plan at a time, frozen at original signal levels.
+// Signal levels are illustrations, not order placement or fill confirmations.
+var int side = 0
+var float entry = na
+var float stop = na
+var float tp1 = na
+var float tp2 = na
+var float tp3 = na
+var bool hitTP1 = false
+var bool hitTP2 = false
+var bool hitTP3 = false
+var string planStatus = "WAIT"
+var int planBar = na
+
+// Drawing references; each active setup uses anchored horizontal objects.
+var line entryLine = na
+var line stopLine = na
+var line tp1Line = na
+var line tp2Line = na
+var line tp3Line = na
+var label entryLabel = na
+var label stopLabel = na
+var label tp1Label = na
+var label tp2Label = na
+var label tp3Label = na
+
+if longSignal or shortSignal
+    side := longSignal ? 1 : -1
+    entry := close
+    stop := longSignal ? stopLongCandidate : stopShortCandidate
+    initialRisk = math.abs(entry - stop)
+    tp1 := entry + side * initialRisk * rr1
+    tp2 := entry + side * initialRisk * rr2
+    tp3 := entry + side * initialRisk * rr3
+    hitTP1 := false
+    hitTP2 := false
+    hitTP3 := false
+    planStatus := longSignal ? "BUY SETUP" : "SELL SETUP"
+    planBar := bar_index
+    lastSignalBar := bar_index
+    // Remove the previous setup's line objects by default.
+    // These objects are anchored by bar_index and PRICE, not continuous plot steplines.
+    if not showHistory
+        if not na(entryLine)
+            line.delete(entryLine)
+        if not na(stopLine)
+            line.delete(stopLine)
+        if not na(tp1Line)
+            line.delete(tp1Line)
+        if not na(tp2Line)
+            line.delete(tp2Line)
+        if not na(tp3Line)
+            line.delete(tp3Line)
+        if not na(entryLabel)
+            label.delete(entryLabel)
+        if not na(stopLabel)
+            label.delete(stopLabel)
+        if not na(tp1Label)
+            label.delete(tp1Label)
+        if not na(tp2Label)
+            label.delete(tp2Label)
+        if not na(tp3Label)
+            label.delete(tp3Label)
+
+    // Draw a new FIVE-line plan originating at the actual signal candle.
+    entryLine := line.new(bar_index, entry, bar_index + 1, entry, xloc=xloc.bar_index, extend=extend.right, color=color.white, width=2)
+    stopLine := line.new(bar_index, stop, bar_index + 1, stop, xloc=xloc.bar_index, extend=extend.right, color=color.red, width=2)
+    tp1Line := line.new(bar_index, tp1, bar_index + 1, tp1, xloc=xloc.bar_index, extend=extend.right, color=color.lime, width=2)
+    tp2Line := line.new(bar_index, tp2, bar_index + 1, tp2, xloc=xloc.bar_index, extend=extend.right, color=color.green, width=2)
+    tp3Line := line.new(bar_index, tp3, bar_index + 1, tp3, xloc=xloc.bar_index, extend=extend.right, color=color.teal, width=2)
+
+    if showLabels
+        entryLabel := label.new(bar_index, entry, (longSignal ? "BUY " : "SELL ") + "ENTRY " + str.tostring(entry, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=longSignal ? color.teal : color.red, textcolor=color.white, size=size.small)
+        stopLabel := label.new(bar_index, stop, "SL " + str.tostring(stop, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.red, textcolor=color.white, size=size.tiny)
+        tp1Label := label.new(bar_index, tp1, "TP1 " + str.tostring(tp1, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp2Label := label.new(bar_index, tp2, "TP2 " + str.tostring(tp2, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.green, textcolor=color.white, size=size.tiny)
+        tp3Label := label.new(bar_index, tp3, "TP3 " + str.tostring(tp3, format.mintick), xloc=xloc.bar_index, style=label.style_label_left, color=color.teal, textcolor=color.white, size=size.tiny)
+
+// Avoid retroactively declaring fills: the plan starts from the FOLLOWING candle.
+// Where a single bar touches SL and TP, conservatively count the stop first.
+newPlanBar = not na(planBar) and bar_index > planBar
+stoppedNow = newPlanBar and side != 0 and (side == 1 ? low <= stop : high >= stop)
+tp1Now = newPlanBar and side != 0 and not stoppedNow and not hitTP1 and (side == 1 ? high >= tp1 : low <= tp1)
+tp2Now = newPlanBar and side != 0 and not stoppedNow and not hitTP2 and (side == 1 ? high >= tp2 : low <= tp2)
+tp3Now = newPlanBar and side != 0 and not stoppedNow and not hitTP3 and (side == 1 ? high >= tp3 : low <= tp3)
+if barstate.isconfirmed
+    if stoppedNow
+        planStatus := "SL HIT (bar test)"
+        side := 0
+    else if side != 0
+        hitTP1 := hitTP1 or tp1Now
+        hitTP2 := hitTP2 or tp2Now
+        hitTP3 := hitTP3 or tp3Now
+        if hitTP3
+            planStatus := "TP3 HIT (bar test)"
+            side := 0
+        else if hitTP2
+            planStatus := "TP2 HIT (bar test)"
+        else if hitTP1
+            planStatus := "TP1 HIT (bar test)"
+
+
+// Hide the old plan after it completes. This prevents a stale 3989 entry from
+// appearing as though it belongs to the current candle at a different price.
+closedNow = barstate.isconfirmed and (stoppedNow or tp3Now)
+if closedNow and not showClosed and not showHistory
+    if not na(entryLine)
+        line.delete(entryLine)
+        entryLine := na
+    if not na(stopLine)
+        line.delete(stopLine)
+        stopLine := na
+    if not na(tp1Line)
+        line.delete(tp1Line)
+        tp1Line := na
+    if not na(tp2Line)
+        line.delete(tp2Line)
+        tp2Line := na
+    if not na(tp3Line)
+        line.delete(tp3Line)
+        tp3Line := na
+    if not na(entryLabel)
+        label.delete(entryLabel)
+        entryLabel := na
+    if not na(stopLabel)
+        label.delete(stopLabel)
+        stopLabel := na
+    if not na(tp1Label)
+        label.delete(tp1Label)
+        tp1Label := na
+    if not na(tp2Label)
+        label.delete(tp2Label)
+        tp2Label := na
+    if not na(tp3Label)
+        label.delete(tp3Label)
+        tp3Label := na
+
+plot(tradingMode and showAlignmentTest ? close : na, "Scale test (must touch candle closes)", color=color.fuchsia, style=plot.style_circles, linewidth=3)
+plot(tradingMode and showEMAs ? fastEMA : na, "Fast EMA", color=color.new(color.aqua, 15))
+plot(tradingMode and showEMAs ? slowEMA : na, "Slow EMA", color=color.new(color.orange, 10))
+plotshape(longSignal, title="BUY setup", text="BUY", style=shape.labelup, location=location.belowbar, color=color.teal, textcolor=color.white, size=size.tiny)
+plotshape(shortSignal, title="SELL setup", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.tiny)
+
+// Dynamic alerts include reference plan prices. Create alert using "Any alert() function call".
+if longSignal or shortSignal
+    alert("PSM V4 " + (longSignal ? "BUY" : "SELL") + " " + syminfo.ticker + " TF=" + timeframe.period + " Entry=" + str.tostring(entry, format.mintick) + " SL=" + str.tostring(stop, format.mintick) + " TP1=" + str.tostring(tp1, format.mintick) + " TP2=" + str.tostring(tp2, format.mintick) + " TP3=" + str.tostring(tp3, format.mintick), alert.freq_once_per_bar_close)
+alertcondition(longSignal, "PSM BUY setup", "PSM confirmed bullish setup on {{ticker}} {{interval}}")
+alertcondition(shortSignal, "PSM SELL setup", "PSM confirmed bearish setup on {{ticker}} {{interval}}")
+
+var table statusTable = table.new(position.top_right, 2, 7, border_width=1)
+if tradingMode and showPanel and barstate.islast
+    stateText = localBull ? "Bullish" : localBear ? "Bearish" : "Mixed / range"
+    htfText = not htfValid ? "Choose a higher TF" : not useHTF ? "Disabled" : htfBull ? "Bullish" : htfBear ? "Bearish" : "Neutral"
+    decisionText = side != 0 ? planStatus : planStatus == "WAIT" ? "WAIT" : planStatus
+    table.cell(statusTable, 0, 0, "PSM V4", bgcolor=color.new(color.purple, 45), text_color=color.white)
+    table.cell(statusTable, 1, 0, syminfo.ticker + " " + timeframe.period, bgcolor=color.new(color.purple, 45), text_color=color.white)
+    table.cell(statusTable, 0, 1, "Structure", text_color=color.white)
+    table.cell(statusTable, 1, 1, stateText, text_color=color.white)
+    table.cell(statusTable, 0, 2, "HTF trend", text_color=color.white)
+    table.cell(statusTable, 1, 2, htfText, text_color=color.white)
+    table.cell(statusTable, 0, 3, "RSI", text_color=color.white)
+    table.cell(statusTable, 1, 3, str.tostring(momentum, "#.0"), text_color=color.white)
+    table.cell(statusTable, 0, 4, "Signal / plan", text_color=color.white)
+    table.cell(statusTable, 1, 4, decisionText, text_color=color.white)
+    table.cell(statusTable, 0, 5, "SL / Entry", text_color=color.white)
+    table.cell(statusTable, 1, 5, na(entry) ? "—" : str.tostring(stop, format.mintick) + " / " + str.tostring(entry, format.mintick), text_color=color.white)
+    table.cell(statusTable, 0, 6, "Disclaimer", text_color=color.silver)
+    table.cell(statusTable, 1, 6, "Rules-based / test first", text_color=color.silver)
+
+
+// =====================================================================
+// PSM CRYPTO INVESTOR MODE
+// Separate confirmed higher-timeframe logic; the original Trading rules
+// and levels above are preserved and are active only in Trading Mode.
+// =====================================================================
+
+// These are investor timeframe values from the LAST CLOSED candle.
+// Do not use a same/lower investor timeframe: lookahead_on would be invalid.
+[investClose, investEMAfast, investEMAslow, investRSI, investATR, investATRavg, investSupport, investResistance] = request.security(syminfo.tickerid, investTF, [close[1], ta.ema(close, investFastLen)[1], ta.ema(close, investSlowLen)[1], ta.rsi(close, investRSILen)[1], ta.atr(investATRLen)[1], ta.sma(ta.atr(investATRLen), 20)[1], ta.lowest(low, investBaseBars)[1], ta.highest(high, investBaseBars)[1]], lookahead=barmerge.lookahead_on)
+
+investSeconds = timeframe.in_seconds(investTF)
+investTimeframeOK = not na(investSeconds) and not na(chartSecs) and investSeconds > chartSecs
+investCrypto = syminfo.type == "crypto"
+investDataOK = not na(investClose) and not na(investEMAslow) and not na(investEMAfast) and not na(investRSI) and not na(investATR) and not na(investATRavg) and not na(investSupport) and investATR > 0
+investOK = investorMode and investCrypto and investTimeframeOK and investDataOK
+
+investBull = investEMAfast > investEMAslow and investClose > investEMAslow
+investBear = investEMAfast < investEMAslow and investClose < investEMAslow
+investCompressed = investATR < investATRavg * 0.9
+investNearSupport = investClose <= investSupport + 3.0 * investATR
+investExtended = investClose > investEMAfast + 2.5 * investATR
+investWeakening = investBull and (investRSI < 48 or investClose < investEMAfast)
+
+// Market "seasons" are rule-based observations, NOT a prediction of a cycle.
+string investSeason = "CONSOLIDATION"
+if investBear and investRSI < 35
+    investSeason := "CAPITULATION RISK"
+else if investBear and investClose > investEMAfast and investRSI >= 50
+    investSeason := "RECOVERY WATCH"
+else if investWeakening
+    investSeason := "DISTRIBUTION WATCH"
+else if investBull and investRSI >= 58 and not investExtended
+    investSeason := "BULL EXPANSION"
+else if investCompressed and investNearSupport and investRSI >= 38 and investRSI <= 58
+    investSeason := "ACCUMULATION WATCH"
+else if investBear
+    investSeason := "BEAR SEASON"
+else if investBull
+    investSeason := "BULL SEASON"
+
+// Investor entry ranges use confirmed HTF EMA and historical support.
+// They are approximate reference zones, not limit orders.
+investAnchor = math.max(investSupport, investEMAfast - 0.5 * investATR)
+investEntryTop = investAnchor + investBandATR * investATR
+investEntryBottom = math.max(syminfo.mintick, investAnchor - investBandATR * investATR)
+investSoftTop = investEntryBottom
+investSoftBottom = math.max(syminfo.mintick, investEntryBottom - 0.6 * investATR)
+investHardTop = investSoftBottom
+investHardBottom = math.max(syminfo.mintick, math.min(investSupport, investHardTop) - investStopATR * investATR)
+investRisk = investEntryTop - investHardBottom
+
+// Zones remain anchored to absolute prices. Existing chart scale must match
+// candlesticks (as it did for the fixed PSM V4.2 instance).
+investTp1Bottom = investEntryTop + investRisk * 1.0
+investTp1Top = investTp1Bottom + 0.65 * investATR
+investTp2Bottom = investEntryTop + investRisk * 2.0
+investTp2Top = investTp2Bottom + 0.65 * investATR
+investTp3Bottom = investEntryTop + investRisk * 3.0
+investTp3Top = investTp3Bottom + 0.65 * investATR
+
+investInEntry = investClose >= investEntryBottom and investClose <= investEntryTop
+investBroken = investClose < investHardBottom
+investReduce = investWeakening or investExtended or investSeason == "CAPITULATION RISK"
+investBuy = investBull and investInEntry and investRSI >= 45 and investRSI <= 68 and not investExtended
+string investDecision = "WAIT / OBSERVE"
+if investBroken
+    investDecision := "INVALIDATED / AVOID"
+else if investReduce
+    investDecision := "REDUCE / AVOID NEW BUY"
+else if investBuy
+    investDecision := "BUY ZONE CANDIDATE"
+else if investBull and investClose > investEntryBottom
+    investDecision := "HOLD / WAIT FOR ENTRY"
+else if investBear
+    investDecision := "BEARISH / AVOID BUY"
+
+investRiskLabel = investBroken ? "HIGH - INVALIDATED" : investBear ? "HIGH - BEAR REGIME" : investExtended ? "HIGH - EXTENDED" : investWeakening ? "ELEVATED" : "CONDITIONAL"
+investTrendText = investBull ? "BULLISH" : investBear ? "BEARISH" : "MIXED"
+
+// Create and then update only five boxes, rather than thousands of old zones.
+// Each region uses bar_index horizontally and PRICE vertically.
+f_investorBox(box existing, int l, int r, float topPrice, float bottomPrice, color borderTint, color fillTint, string textValue) =>
+    box result = existing
+    if na(result)
+        result := box.new(left=l, top=topPrice, right=r, bottom=bottomPrice, xloc=xloc.bar_index, bgcolor=fillTint, border_color=borderTint, border_width=1, text=textValue, text_size=size.tiny, text_color=color.white, text_halign=text.align_left)
+    else
+        box.set_lefttop(result, l, topPrice)
+        box.set_rightbottom(result, r, bottomPrice)
+        box.set_bgcolor(result, fillTint)
+        box.set_border_color(result, borderTint)
+        box.set_text(result, textValue)
+    result
+
+var box investorEntryBox = na
+var box investorSoftBox = na
+var box investorHardBox = na
+var box investorTP1Box = na
+var box investorTP2Box = na
+var box investorTP3Box = na
+
+// Distinct investor panel so Trading dashboard remains unchanged.
+var table investorTable = table.new(position.top_right, 2, 10, border_width=1)
+
+if investorMode and barstate.islast
+    if showInvestorPanel
+        table.cell(investorTable, 0, 0, "PSM CRYPTO INVESTOR", bgcolor=color.new(color.purple, 35), text_color=color.white)
+        table.cell(investorTable, 1, 0, syminfo.ticker, bgcolor=color.new(color.purple, 35), text_color=color.white)
+        table.cell(investorTable, 0, 1, "Mode", text_color=color.white)
+        table.cell(investorTable, 1, 1, "INVESTOR / " + investTF, text_color=color.white)
+        if not investOK
+            errText = not investCrypto ? "SELECT A CRYPTO CHART" : not investTimeframeOK ? "SET INVESTOR TF ABOVE CHART TF" : "AWAITING ENOUGH HISTORY"
+            table.cell(investorTable, 0, 2, "Data status", text_color=color.white)
+            table.cell(investorTable, 1, 2, errText, text_color=color.orange)
+        else
+            table.cell(investorTable, 0, 2, "Market season", text_color=color.white)
+            table.cell(investorTable, 1, 2, investSeason, text_color=color.yellow)
+            table.cell(investorTable, 0, 3, "Trend", text_color=color.white)
+            table.cell(investorTable, 1, 3, investTrendText, text_color=investBull ? color.lime : investBear ? color.red : color.yellow)
+            table.cell(investorTable, 0, 4, "Action", text_color=color.white)
+            table.cell(investorTable, 1, 4, investDecision, text_color=investBuy ? color.lime : investBroken or investReduce ? color.red : color.yellow)
+            table.cell(investorTable, 0, 5, "Risk", text_color=color.white)
+            table.cell(investorTable, 1, 5, investRiskLabel, text_color=investBroken or investBear ? color.red : color.yellow)
+            table.cell(investorTable, 0, 6, "Entry zone", text_color=color.white)
+            table.cell(investorTable, 1, 6, str.tostring(investEntryBottom, format.mintick) + " – " + str.tostring(investEntryTop, format.mintick), text_color=color.aqua)
+            table.cell(investorTable, 0, 7, "Hard invalidation", text_color=color.white)
+            table.cell(investorTable, 1, 7, str.tostring(investHardBottom, format.mintick), text_color=color.red)
+            table.cell(investorTable, 0, 8, "TP1 / TP2 / TP3", text_color=color.white)
+            table.cell(investorTable, 1, 8, str.tostring(investTp1Bottom, format.mintick) + " / " + str.tostring(investTp2Bottom, format.mintick) + " / " + str.tostring(investTp3Bottom, format.mintick), text_color=color.lime)
+            table.cell(investorTable, 0, 9, "Data", text_color=color.silver)
+            table.cell(investorTable, 1, 9, "LAST CONFIRMED " + investTF + " / TEST FIRST", text_color=color.silver)
+
+    if investOK and showInvestorZones
+        leftIndex = math.max(0, bar_index - investZoneWidth)
+        rightIndex = bar_index + 25
+        investorEntryBox := f_investorBox(investorEntryBox, leftIndex, rightIndex, investEntryTop, investEntryBottom, color.aqua, color.new(color.teal, 82), "ACCUMULATION / ENTRY")
+        investorSoftBox := f_investorBox(investorSoftBox, leftIndex, rightIndex, investSoftTop, investSoftBottom, color.orange, color.new(color.orange, 88), "SOFT INVALIDATION")
+        investorHardBox := f_investorBox(investorHardBox, leftIndex, rightIndex, investHardTop, investHardBottom, color.red, color.new(color.red, 85), "HARD INVALIDATION")
+        investorTP1Box := f_investorBox(investorTP1Box, leftIndex, rightIndex, investTp1Top, investTp1Bottom, color.lime, color.new(color.lime, 88), "TP1 ZONE")
+        investorTP2Box := f_investorBox(investorTP2Box, leftIndex, rightIndex, investTp2Top, investTp2Bottom, color.green, color.new(color.green, 89), "TP2 ZONE")
+        investorTP3Box := f_investorBox(investorTP3Box, leftIndex, rightIndex, investTp3Top, investTp3Bottom, color.teal, color.new(color.teal, 88), "TP3 ZONE")
+
+// Optional alerts only on a transition between confirmed investor timeframe bars.
+// They are NOT guaranteed forecasts and do not execute trades.
+investTFChanged = timeframe.change(investTF)
+investBuyEvent = investorMode and investOK and investTFChanged and investBuy
+investDangerEvent = investorMode and investOK and investTFChanged and (investBroken or investReduce)
+alertcondition(investBuyEvent, "PSM Investor BUY zone candidate", "PSM Investor BUY zone candidate on {{ticker}}. Confirm chart and risk before acting.")
+alertcondition(investDangerEvent, "PSM Investor risk / reduce", "PSM Investor risk or reduce condition on {{ticker}}. Review the investor dashboard.")
