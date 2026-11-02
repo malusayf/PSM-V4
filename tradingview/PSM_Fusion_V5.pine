@@ -1,5 +1,5 @@
 //@version=6
-indicator("PSM Fusion V5.2 | Trading + Crypto Investor", shorttitle="PSM Fusion V5.2", overlay=true, max_labels_count=200, max_lines_count=200, max_boxes_count=12)
+indicator("PSM Fusion V5.3 | Trading + Crypto + Stocks", shorttitle="PSM Fusion V5.3", overlay=true, max_labels_count=200, max_lines_count=200, max_boxes_count=12)
 
 // PSM V4 Pine-only indicator. It runs on the active TradingView chart and broker symbol.
 // A confirmed-candle, rules-based market-structure model; not AI, not auto-execution.
@@ -11,9 +11,10 @@ indicator("PSM Fusion V5.2 | Trading + Crypto Investor", shorttitle="PSM Fusion 
 
 // MODE SWITCH: Trading is intentionally the untouched default experience.
 modeGroup = "Fusion Mode"
-fusionMode = input.string("PSM Trading", "Mode", options=["PSM Trading", "PSM Crypto Investor"], group=modeGroup)
+fusionMode = input.string("PSM Trading", "Mode", options=["PSM Trading", "PSM Crypto Investor", "PSM Stock Investor"], group=modeGroup)
 tradingMode = fusionMode == "PSM Trading"
 investorMode = fusionMode == "PSM Crypto Investor"
+stockInvestorMode = fusionMode == "PSM Stock Investor"
 
 groupMarket = "Market Understanding"
 fastLen = input.int(21, "Fast EMA", minval=2, group=groupMarket)
@@ -52,6 +53,29 @@ investStopATR = input.float(1.0, "Hard invalidation buffer (ATR)", minval=0.1, m
 investZoneWidth = input.int(65, "Chart zone width (bars)", minval=10, maxval=180, group=groupInvestor)
 showInvestorZones = input.bool(true, "Show investor zones", group=groupInvestor)
 showInvestorPanel = input.bool(true, "Show investor decision dashboard", group=groupInvestor)
+
+
+// Stock mode uses its own confirmed weekly structure, trend and risk settings.
+// Crypto Investor logic above is unchanged.
+groupStock = "Stock Investor — Confirmed Higher Timeframe"
+stockTF = input.timeframe("W", "Stock analysis timeframe", group=groupStock)
+stockFastLen = input.int(20, "Stock trend EMA fast", minval=3, group=groupStock)
+stockSlowLen = input.int(50, "Stock trend EMA slow", minval=5, group=groupStock)
+stockBaseBars = input.int(40, "Stock support lookback", minval=10, maxval=250, group=groupStock)
+stockBandATR = input.float(0.7, "Stock entry zone half-width (ATR)", minval=0.1, maxval=3, step=0.1, group=groupStock)
+stockStopATR = input.float(1.0, "Stock hard invalidation buffer (ATR)", minval=0.1, maxval=5, step=0.1, group=groupStock)
+stockZoneWidth = input.int(65, "Stock chart zone width", minval=10, maxval=180, group=groupStock)
+showStockZones = input.bool(true, "Show stock zones", group=groupStock)
+showStockPanel = input.bool(true, "Show stock analysis dashboard", group=groupStock)
+
+// Position inputs are shared by both investor modes; they do not change
+// signal logic, zones, or order placement.
+groupPosition = "Investor — Position & P/L Calculator"
+positionAmount = input.float(0.0, "Amount invested (chart quote currency)", minval=0, step=10, group=groupPosition)
+positionEntry = input.float(0.0, "Your actual entry price", minval=0, group=groupPosition)
+stockWholeOnly = input.bool(false, "Stocks: whole shares only", group=groupPosition)
+positionFee = input.float(0.0, "Estimated fee EACH side (quote currency)", minval=0, step=0.01, group=groupPosition)
+showPositionTable = input.bool(true, "Show projected P/L table", group=groupPosition)
 
 // Core observations.
 fastEMA = ta.ema(close, fastLen)
@@ -416,3 +440,198 @@ investBuyEvent = investorMode and investOK and investTFChanged and investBuy
 investDangerEvent = investorMode and investOK and investTFChanged and (investBroken or investReduce)
 alertcondition(investBuyEvent, "PSM Investor BUY zone candidate", "PSM Investor BUY zone candidate on {{ticker}}. Confirm chart and risk before acting.")
 alertcondition(investDangerEvent, "PSM Investor risk / reduce", "PSM Investor risk or reduce condition on {{ticker}}. Review the investor dashboard.")
+
+
+// ============================================================================
+// STOCK INVESTOR — ADDITIVE; DOES NOT ALTER TRADING OR CRYPTO INVESTOR
+// ============================================================================
+// Uses only PREVIOUSLY CLOSED weekly/daily stock analysis bars. The timeframe
+// must be strictly higher than the chart timeframe. Stocks have gap risk,
+// earnings, dividends, splits and execution differences not forecast here.
+[stockClose, stockEMAFast, stockEMASlow, stockRSI, stockATR, stockATRAvg, stockSupport, stockResistance] = request.security(syminfo.tickerid, stockTF, [close[1], ta.ema(close, stockFastLen)[1], ta.ema(close, stockSlowLen)[1], ta.rsi(close, 14)[1], ta.atr(14)[1], ta.sma(ta.atr(14), 20)[1], ta.lowest(low, stockBaseBars)[1], ta.highest(high, stockBaseBars)[1]], lookahead=barmerge.lookahead_on)
+
+stockTFsecs = timeframe.in_seconds(stockTF)
+stockTFValid = not na(stockTFsecs) and not na(chartSecs) and stockTFsecs > chartSecs
+stockAssetValid = syminfo.type == "stock" or syminfo.type == "fund"
+stockDataValid = not na(stockClose) and not na(stockEMAFast) and not na(stockEMASlow) and not na(stockRSI) and not na(stockATR) and not na(stockATRAvg) and not na(stockSupport) and stockATR > 0
+stockOK = stockInvestorMode and stockTFValid and stockAssetValid and stockDataValid
+stockBull = stockClose > stockEMASlow and stockEMAFast > stockEMASlow
+stockBear = stockClose < stockEMASlow and stockEMAFast < stockEMASlow
+stockExtended = stockClose > stockEMAFast + 2.5 * stockATR
+stockWeakening = stockBull and (stockClose < stockEMAFast or stockRSI < 48)
+stockCompressed = stockATR < stockATRAvg * 0.9
+stockNearSupport = stockClose < stockSupport + 3.0 * stockATR
+
+string stockSeason = "CONSOLIDATION"
+if stockBear and stockRSI < 35
+    stockSeason := "CAPITULATION RISK"
+else if stockBear and stockClose > stockEMAFast and stockRSI >= 50
+    stockSeason := "RECOVERY WATCH"
+else if stockWeakening
+    stockSeason := "DISTRIBUTION WATCH"
+else if stockBull and stockRSI >= 58 and not stockExtended
+    stockSeason := "BULL EXPANSION"
+else if stockCompressed and stockNearSupport and stockRSI >= 38 and stockRSI <= 58
+    stockSeason := "ACCUMULATION WATCH"
+else if stockBear
+    stockSeason := "BEAR TREND"
+else if stockBull
+    stockSeason := "BULL TREND"
+
+// Price-based planning zones, not guarantees of fills or profit.
+stockAnchor = math.max(stockSupport, stockEMAFast - 0.5 * stockATR)
+stockEntryTop = stockAnchor + stockBandATR * stockATR
+stockEntryBottom = math.max(syminfo.mintick, stockAnchor - stockBandATR * stockATR)
+stockSoftTop = stockEntryBottom
+stockSoftBottom = math.max(syminfo.mintick, stockEntryBottom - 0.6 * stockATR)
+stockHardTop = stockSoftBottom
+stockHardBottom = math.max(syminfo.mintick, math.min(stockSupport, stockHardTop) - stockStopATR * stockATR)
+stockRisk = stockEntryTop - stockHardBottom
+stockTp1Bottom = stockEntryTop + stockRisk
+stockTp1Top = stockTp1Bottom + 0.65 * stockATR
+stockTp2Bottom = stockEntryTop + stockRisk * 2.0
+stockTp2Top = stockTp2Bottom + 0.65 * stockATR
+stockTp3Bottom = stockEntryTop + stockRisk * 3.0
+stockTp3Top = stockTp3Bottom + 0.65 * stockATR
+stockInsideEntry = stockClose >= stockEntryBottom and stockClose <= stockEntryTop
+stockBroken = stockClose < stockHardBottom
+stockReduce = stockWeakening or stockExtended or stockSeason == "CAPITULATION RISK"
+stockBuyCandidate = stockBull and stockInsideEntry and stockRSI >= 45 and stockRSI <= 68 and not stockExtended
+
+string stockDecision = "WAIT / OBSERVE"
+if stockBroken
+    stockDecision := "INVALIDATED / AVOID"
+else if stockReduce
+    stockDecision := "REDUCE / AVOID NEW BUY"
+else if stockBuyCandidate
+    stockDecision := "BUY ZONE CANDIDATE"
+else if stockBull and stockClose > stockEntryBottom
+    stockDecision := "HOLD / WAIT FOR ENTRY"
+else if stockBear
+    stockDecision := "BEARISH / AVOID BUY"
+
+var box stockEntryBox = na
+var box stockSoftBox = na
+var box stockHardBox = na
+var box stockTP1Box = na
+var box stockTP2Box = na
+var box stockTP3Box = na
+
+if stockOK and showStockZones and barstate.islast
+    stockLeft = math.max(0, bar_index - stockZoneWidth)
+    stockRight = bar_index + 25
+    stockEntryBox := f_investorBox(stockEntryBox, stockLeft, stockRight, stockEntryTop, stockEntryBottom, color.aqua, color.new(color.teal, 82), "STOCK ENTRY / ACCUMULATION")
+    stockSoftBox := f_investorBox(stockSoftBox, stockLeft, stockRight, stockSoftTop, stockSoftBottom, color.orange, color.new(color.orange, 88), "SOFT INVALIDATION")
+    stockHardBox := f_investorBox(stockHardBox, stockLeft, stockRight, stockHardTop, stockHardBottom, color.red, color.new(color.red, 85), "HARD INVALIDATION")
+    stockTP1Box := f_investorBox(stockTP1Box, stockLeft, stockRight, stockTp1Top, stockTp1Bottom, color.lime, color.new(color.lime, 88), "STOCK TP1")
+    stockTP2Box := f_investorBox(stockTP2Box, stockLeft, stockRight, stockTp2Top, stockTp2Bottom, color.green, color.new(color.green, 89), "STOCK TP2")
+    stockTP3Box := f_investorBox(stockTP3Box, stockLeft, stockRight, stockTp3Top, stockTp3Bottom, color.teal, color.new(color.teal, 88), "STOCK TP3")
+
+var table stockTable = table.new(position.top_right, 2, 10, border_width=1)
+if stockInvestorMode and showStockPanel and barstate.islast
+    stockError = not stockAssetValid ? "CHOOSE STOCK / FUND CHART" : not stockTFValid ? "SELECT HIGHER STOCK TF" : not stockDataValid ? "NEED MORE CONFIRMED DATA" : "READY"
+    table.cell(stockTable, 0, 0, "PSM STOCK INVESTOR", bgcolor=color.new(color.purple, 35), text_color=color.white)
+    table.cell(stockTable, 1, 0, syminfo.ticker, bgcolor=color.new(color.purple, 35), text_color=color.white)
+    table.cell(stockTable, 0, 1, "Data", text_color=color.white)
+    table.cell(stockTable, 1, 1, stockError, text_color=stockOK ? color.lime : color.orange)
+    if stockOK
+        table.cell(stockTable, 0, 2, "Market season", text_color=color.white)
+        table.cell(stockTable, 1, 2, stockSeason, text_color=color.yellow)
+        table.cell(stockTable, 0, 3, "Bias", text_color=color.white)
+        table.cell(stockTable, 1, 3, stockBull ? "BULLISH" : stockBear ? "BEARISH" : "MIXED", text_color=stockBull ? color.lime : stockBear ? color.red : color.yellow)
+        table.cell(stockTable, 0, 4, "Action", text_color=color.white)
+        table.cell(stockTable, 1, 4, stockDecision, text_color=stockBuyCandidate ? color.lime : stockReduce or stockBroken ? color.red : color.yellow)
+        table.cell(stockTable, 0, 5, "Investor RSI", text_color=color.white)
+        table.cell(stockTable, 1, 5, str.tostring(stockRSI, "#.0"), text_color=color.white)
+        table.cell(stockTable, 0, 6, "Entry zone", text_color=color.white)
+        table.cell(stockTable, 1, 6, str.tostring(stockEntryBottom, format.mintick) + " - " + str.tostring(stockEntryTop, format.mintick), text_color=color.aqua)
+        table.cell(stockTable, 0, 7, "Hard invalidation", text_color=color.white)
+        table.cell(stockTable, 1, 7, str.tostring(stockHardBottom, format.mintick), text_color=color.red)
+        table.cell(stockTable, 0, 8, "TP1 / TP2 / TP3", text_color=color.white)
+        table.cell(stockTable, 1, 8, str.tostring(stockTp1Bottom, format.mintick) + " / " + str.tostring(stockTp2Bottom, format.mintick) + " / " + str.tostring(stockTp3Bottom, format.mintick), text_color=color.lime)
+        table.cell(stockTable, 0, 9, "Disclaimer", text_color=color.silver)
+        table.cell(stockTable, 1, 9, "CONFIRMED HTF / TEST FIRST", text_color=color.silver)
+
+stockTFChanged = timeframe.change(stockTF)
+stockBuyAlert = stockOK and stockTFChanged and stockBuyCandidate
+stockRiskAlert = stockOK and stockTFChanged and (stockReduce or stockBroken)
+alertcondition(stockBuyAlert, "PSM Stock Investor entry-zone candidate", "PSM Stock Investor candidate on {{ticker}}. Check dashboard and position risk.")
+alertcondition(stockRiskAlert, "PSM Stock Investor risk warning", "PSM Stock Investor risk warning on {{ticker}}. Check chart and positions.")
+
+// ============================================================================
+// SHARED POSITION PROJECTION PANEL FOR BOTH INVESTOR MODES
+// ============================================================================
+// Spot-long portfolio calculations only, not leveraged, short or options P/L.
+// Amount is the amount used to purchase shares/tokens at the user entry price.
+// Fees are fixed, paid once on buy and once on sale, rather than % fees.
+// Theoretical zone figures include both fees and assume execution at zone prices.
+// Unused cash remains outside the P/L calculation for whole-share stock orders.
+f_amountString(float value) =>
+    (value >= 0 ? "+" : "") + str.tostring(value, "#.00") + " " + syminfo.currency
+
+f_netPnL(float quantity, float entryPrice, float targetPrice, float eachSideFee) =>
+    quantity * (targetPrice - entryPrice) - 2.0 * eachSideFee
+
+f_rangePnL(float quantity, float entryPrice, float bottom, float top, float eachSideFee) =>
+    f_amountString(f_netPnL(quantity, entryPrice, bottom, eachSideFee)) + " to " + f_amountString(f_netPnL(quantity, entryPrice, top, eachSideFee))
+
+positionMode = investorMode or stockInvestorMode
+positionValid = positionAmount > 0 and positionEntry > 0
+positionQtyRaw = positionValid ? positionAmount / positionEntry : na
+positionQty = positionValid ? (stockInvestorMode and stockWholeOnly ? math.floor(positionQtyRaw) : positionQtyRaw) : na
+positionReady = positionValid and positionQty > 0
+positionUsed = positionReady ? positionQty * positionEntry : na
+positionUnused = positionReady ? math.max(0, positionAmount - positionUsed) : na
+positionMarketPnl = positionReady ? f_netPnL(positionQty, positionEntry, close, positionFee) : na
+
+pEntryBottom = investorMode ? investEntryBottom : stockEntryBottom
+pEntryTop = investorMode ? investEntryTop : stockEntryTop
+pSoftBottom = investorMode ? investSoftBottom : stockSoftBottom
+pSoftTop = investorMode ? investSoftTop : stockSoftTop
+pHardBottom = investorMode ? investHardBottom : stockHardBottom
+pHardTop = investorMode ? investHardTop : stockHardTop
+pTp1Bottom = investorMode ? investTp1Bottom : stockTp1Bottom
+pTp1Top = investorMode ? investTp1Top : stockTp1Top
+pTp2Bottom = investorMode ? investTp2Bottom : stockTp2Bottom
+pTp2Top = investorMode ? investTp2Top : stockTp2Top
+pTp3Bottom = investorMode ? investTp3Bottom : stockTp3Bottom
+pTp3Top = investorMode ? investTp3Top : stockTp3Top
+pDataOK = investorMode ? investOK : stockOK
+
+var table positionTable = table.new(position.bottom_right, 2, 13, border_width=1)
+if positionMode and showPositionTable and barstate.islast
+    table.cell(positionTable, 0, 0, "MY POSITION / PROJECTION", bgcolor=color.new(color.purple, 35), text_color=color.white)
+    table.cell(positionTable, 1, 0, syminfo.ticker + " (" + syminfo.currency + ")", bgcolor=color.new(color.purple, 35), text_color=color.white)
+    if not pDataOK
+        table.cell(positionTable, 0, 1, "Unavailable", text_color=color.orange)
+        table.cell(positionTable, 1, 1, "CHECK SYMBOL / INVESTOR TF", text_color=color.orange)
+    else if not positionReady
+        table.cell(positionTable, 0, 1, "Enter position", text_color=color.yellow)
+        table.cell(positionTable, 1, 1, "SET AMOUNT + ENTRY > 0", text_color=color.yellow)
+        table.cell(positionTable, 0, 2, "Share rounding", text_color=color.white)
+        table.cell(positionTable, 1, 2, stockInvestorMode and stockWholeOnly ? "WHOLE SHARES" : "FRACTIONAL UNITS", text_color=color.white)
+    else
+        table.cell(positionTable, 0, 1, "Units owned", text_color=color.white)
+        table.cell(positionTable, 1, 1, str.tostring(positionQty, "#.########"), text_color=color.white)
+        table.cell(positionTable, 0, 2, "Entry / amount used", text_color=color.white)
+        table.cell(positionTable, 1, 2, str.tostring(positionEntry, format.mintick) + " / " + str.tostring(positionUsed, "#.00"), text_color=color.white)
+        table.cell(positionTable, 0, 3, "Current net P/L (est.)", text_color=color.white)
+        table.cell(positionTable, 1, 3, f_amountString(positionMarketPnl), text_color=positionMarketPnl >= 0 ? color.lime : color.red)
+        table.cell(positionTable, 0, 4, "TP1 net P/L range", text_color=color.white)
+        table.cell(positionTable, 1, 4, f_rangePnL(positionQty, positionEntry, pTp1Bottom, pTp1Top, positionFee), text_color=color.lime)
+        table.cell(positionTable, 0, 5, "TP2 net P/L range", text_color=color.white)
+        table.cell(positionTable, 1, 5, f_rangePnL(positionQty, positionEntry, pTp2Bottom, pTp2Top, positionFee), text_color=color.lime)
+        table.cell(positionTable, 0, 6, "TP3 net P/L range", text_color=color.white)
+        table.cell(positionTable, 1, 6, f_rangePnL(positionQty, positionEntry, pTp3Bottom, pTp3Top, positionFee), text_color=color.lime)
+        table.cell(positionTable, 0, 7, "Soft SL net P/L range", text_color=color.white)
+        table.cell(positionTable, 1, 7, f_rangePnL(positionQty, positionEntry, pSoftBottom, pSoftTop, positionFee), text_color=color.orange)
+        table.cell(positionTable, 0, 8, "Hard SL net P/L range", text_color=color.white)
+        table.cell(positionTable, 1, 8, f_rangePnL(positionQty, positionEntry, pHardBottom, pHardTop, positionFee), text_color=color.red)
+        table.cell(positionTable, 0, 9, "Price / quote", text_color=color.white)
+        table.cell(positionTable, 1, 9, str.tostring(close, format.mintick) + " " + syminfo.currency, text_color=color.white)
+        table.cell(positionTable, 0, 10, "Unused capital", text_color=color.white)
+        table.cell(positionTable, 1, 10, str.tostring(positionUnused, "#.00") + " " + syminfo.currency, text_color=color.white)
+        table.cell(positionTable, 0, 11, "Fees", text_color=color.white)
+        table.cell(positionTable, 1, 11, str.tostring(positionFee, "#.00") + " each side (estimated)", text_color=color.white)
+        table.cell(positionTable, 0, 12, "Notes", text_color=color.silver)
+        table.cell(positionTable, 1, 12, "SPOT LONG / NO SLIPPAGE, TAX, DIVIDENDS", text_color=color.silver)
