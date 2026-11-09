@@ -155,7 +155,10 @@ effectiveTradingTF = autoTimeframes ? autoTradingTF : htf
 effectiveCryptoTF = autoTimeframes ? autoCryptoTF : investTF
 effectiveStockTF = autoTimeframes ? autoStockTF : stockTF
 higherSecs = timeframe.in_seconds(effectiveTradingTF)
-autoHigherValid = not na(chartSecs) and not na(higherSecs) and higherSecs > chartSecs
+// Synthetic Renko/Heikin Ashi/P&F prices are not actual traded-price candles.
+// AUTO blocks non-standard chart types; switching AUTO OFF restores legacy logic.
+autoChartOK = not autoTimeframes or chart.is_standard
+autoHigherValid = not na(chartSecs) and not na(higherSecs) and higherSecs > chartSecs and autoChartOK
 
 // Always request the LAST CLOSED higher-timeframe candle, never the live HTF bar.
 // The old manual configuration is unchanged with autoTimeframes OFF.
@@ -445,7 +448,7 @@ if tradingMode and showPanel and barstate.islast
     stateText = localBull ? "Bullish" : localBear ? "Bearish" : "Mixed / range"
     htfText = not htfValid ? "Choose a higher TF" : not useHTF ? "Disabled" : htfBull ? "Bullish" : htfBear ? "Bearish" : "Neutral"
     if autoTimeframes
-        htfText := autoHigherValid ? htfText + " / AUTO " + effectiveTradingTF : "AUTO TF UNAVAILABLE"
+        htfText := autoHigherValid ? htfText + " / AUTO " + effectiveTradingTF : "AUTO TF/CHART INVALID"
     decisionText = side != 0 ? planStatus : planStatus == "WAIT" ? "WAIT" : planStatus
     table.cell(statusTable, 0, 0, "PSM V4", bgcolor=color.new(color.purple, 45), text_color=color.white)
     table.cell(statusTable, 1, 0, syminfo.ticker + " " + timeframe.period, bgcolor=color.new(color.purple, 45), text_color=color.white)
@@ -474,7 +477,7 @@ if tradingMode and showPanel and barstate.islast
 [investClose, investEMAfast, investEMAslow, investRSI, investATR, investATRavg, investSupport, investResistance] = request.security(syminfo.tickerid, effectiveCryptoTF, [close[1], ta.ema(close, investFastLen)[1], ta.ema(close, investSlowLen)[1], ta.rsi(close, investRSILen)[1], ta.atr(investATRLen)[1], ta.sma(ta.atr(investATRLen), 20)[1], ta.lowest(low, investBaseBars)[1], ta.highest(high, investBaseBars)[1]], lookahead=barmerge.lookahead_on)
 
 investSeconds = timeframe.in_seconds(effectiveCryptoTF)
-investTimeframeOK = not na(investSeconds) and not na(chartSecs) and investSeconds > chartSecs
+investTimeframeOK = not na(investSeconds) and not na(chartSecs) and investSeconds > chartSecs and autoChartOK
 investCrypto = syminfo.type == "crypto"
 investDataOK = not na(investClose) and not na(investEMAslow) and not na(investEMAfast) and not na(investRSI) and not na(investATR) and not na(investATRavg) and not na(investSupport) and investATR > 0
 investOK = investorMode and investCrypto and investTimeframeOK and investDataOK
@@ -573,7 +576,7 @@ if investorMode and barstate.islast
         table.cell(investorTable, 0, 1, "Mode", text_color=color.white)
         table.cell(investorTable, 1, 1, "INVESTOR / " + effectiveCryptoTF + (autoTimeframes ? " AUTO" : ""), text_color=color.white)
         if not investOK
-            errText = not investCrypto ? "SELECT A CRYPTO CHART" : not investTimeframeOK ? (autoTimeframes ? "AUTO TF UNAVAILABLE" : "SET INVESTOR TF ABOVE CHART TF") : "AWAITING ENOUGH HISTORY"
+            errText = not investCrypto ? "SELECT A CRYPTO CHART" : not investTimeframeOK ? (autoTimeframes ? "AUTO TF/CHART INVALID" : "SET INVESTOR TF ABOVE CHART TF") : "AWAITING ENOUGH HISTORY"
             table.cell(investorTable, 0, 2, "Data status", text_color=color.white)
             table.cell(investorTable, 1, 2, errText, text_color=color.orange)
         else
@@ -607,8 +610,8 @@ if investorMode and barstate.islast
 // Optional alerts only on a transition between confirmed investor timeframe bars.
 // They are NOT guaranteed forecasts and do not execute trades.
 investTFChanged = timeframe.change(effectiveCryptoTF)
-investBuyEvent = investorMode and investOK and investTFChanged and investBuy
-investDangerEvent = investorMode and investOK and investTFChanged and (investBroken or investReduce)
+investBuyEvent = investorMode and investOK and investTFChanged and investBuy and (not autoTimeframes or barstate.isconfirmed)
+investDangerEvent = investorMode and investOK and investTFChanged and (investBroken or investReduce) and (not autoTimeframes or barstate.isconfirmed)
 alertcondition(investBuyEvent, "PSM Investor BUY zone candidate", "PSM Investor BUY zone candidate on {{ticker}}. Confirm chart and risk before acting.")
 alertcondition(investDangerEvent, "PSM Investor risk / reduce", "PSM Investor risk or reduce condition on {{ticker}}. Review the investor dashboard.")
 
@@ -622,7 +625,7 @@ alertcondition(investDangerEvent, "PSM Investor risk / reduce", "PSM Investor ri
 [stockClose, stockEMAFast, stockEMASlow, stockRSI, stockATR, stockATRAvg, stockSupport, stockResistance] = request.security(syminfo.tickerid, effectiveStockTF, [close[1], ta.ema(close, stockFastLen)[1], ta.ema(close, stockSlowLen)[1], ta.rsi(close, 14)[1], ta.atr(14)[1], ta.sma(ta.atr(14), 20)[1], ta.lowest(low, stockBaseBars)[1], ta.highest(high, stockBaseBars)[1]], lookahead=barmerge.lookahead_on)
 
 stockTFsecs = timeframe.in_seconds(effectiveStockTF)
-stockTFValid = not na(stockTFsecs) and not na(chartSecs) and stockTFsecs > chartSecs
+stockTFValid = not na(stockTFsecs) and not na(chartSecs) and stockTFsecs > chartSecs and autoChartOK
 stockAssetValid = syminfo.type == "stock" or syminfo.type == "fund"
 stockDataValid = not na(stockClose) and not na(stockEMAFast) and not na(stockEMASlow) and not na(stockRSI) and not na(stockATR) and not na(stockATRAvg) and not na(stockSupport) and stockATR > 0
 stockOK = stockInvestorMode and stockTFValid and stockAssetValid and stockDataValid
@@ -700,7 +703,7 @@ if stockOK and showStockZones and barstate.islast
 
 var table stockTable = table.new(position.top_right, 2, 10, border_width=1)
 if stockInvestorMode and showStockPanel and barstate.islast
-    stockError = not stockAssetValid ? "CHOOSE STOCK / FUND CHART" : not stockTFValid ? (autoTimeframes ? "AUTO TF UNAVAILABLE" : "SELECT HIGHER STOCK TF") : not stockDataValid ? "NEED MORE CONFIRMED DATA" : "READY"
+    stockError = not stockAssetValid ? "CHOOSE STOCK / FUND CHART" : not stockTFValid ? (autoTimeframes ? "AUTO TF/CHART INVALID" : "SELECT HIGHER STOCK TF") : not stockDataValid ? "NEED MORE CONFIRMED DATA" : "READY"
     table.cell(stockTable, 0, 0, "PSM STOCK INVESTOR", bgcolor=color.new(color.purple, 35), text_color=color.white)
     table.cell(stockTable, 1, 0, syminfo.ticker, bgcolor=color.new(color.purple, 35), text_color=color.white)
     table.cell(stockTable, 0, 1, "Data", text_color=color.white)
@@ -724,8 +727,8 @@ if stockInvestorMode and showStockPanel and barstate.islast
         table.cell(stockTable, 1, 9, "CONFIRMED HTF / TEST FIRST", text_color=color.silver)
 
 stockTFChanged = timeframe.change(effectiveStockTF)
-stockBuyAlert = stockOK and stockTFChanged and stockBuyCandidate
-stockRiskAlert = stockOK and stockTFChanged and (stockReduce or stockBroken)
+stockBuyAlert = stockOK and stockTFChanged and stockBuyCandidate and (not autoTimeframes or barstate.isconfirmed)
+stockRiskAlert = stockOK and stockTFChanged and (stockReduce or stockBroken) and (not autoTimeframes or barstate.isconfirmed)
 alertcondition(stockBuyAlert, "PSM Stock Investor entry-zone candidate", "PSM Stock Investor candidate on {{ticker}}. Check dashboard and position risk.")
 alertcondition(stockRiskAlert, "PSM Stock Investor risk warning", "PSM Stock Investor risk warning on {{ticker}}. Check chart and positions.")
 
