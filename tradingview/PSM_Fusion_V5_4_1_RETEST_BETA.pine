@@ -492,7 +492,7 @@ if tradingMode and showQualityPanel and barstate.islast
     table.cell(qTable, 0, 4, "TP1 structural obstacle", text_color=color.white)
     table.cell(qTable, 1, 4, qRoom ? "NO OBSTACLE SEEN" : "POTENTIAL OBSTACLE", text_color=color.white)
     table.cell(qTable, 0, 5, "Grade filter", text_color=color.white)
-    table.cell(qTable, 1, 5, qualityEnabled ? "ON / min " + minQuality : "OFF (v5.3 SIGNALS)", text_color=color.white)
+    table.cell(qTable, 1, 5, qualityEnabled ? "ON / min " + minQuality : "OFF (grading not required)", text_color=color.white)
     table.cell(qTable, 0, 6, "Interpretation", text_color=color.silver)
     table.cell(qTable, 1, 6, "OHLC proxies, not hit rate", text_color=color.silver)
 if tradingMode and showQualityLabels and (longSignal or shortSignal)
@@ -510,14 +510,14 @@ if longSignal or shortSignal
 alertcondition(longSignal, "PSM BUY setup", "PSM confirmed bullish setup on {{ticker}} {{interval}}")
 alertcondition(shortSignal, "PSM SELL setup", "PSM confirmed bearish setup on {{ticker}} {{interval}}")
 
-var table statusTable = table.new(position.top_right, 2, 7, border_width=1)
+var table statusTable = table.new(position.top_right, 2, 8, border_width=1)
 if tradingMode and showPanel and barstate.islast
     stateText = localBull ? "Bullish" : localBear ? "Bearish" : "Mixed / range"
     htfText = not htfValid ? "Choose a higher TF" : not useHTF ? "Disabled" : htfBull ? "Bullish" : htfBear ? "Bearish" : "Neutral"
     if autoTimeframes
         htfText := autoHigherValid ? htfText + " / AUTO " + effectiveTradingTF : "AUTO TF/CHART INVALID"
     decisionText = side != 0 ? planStatus : planStatus == "WAIT" ? "WAIT" : planStatus
-    table.cell(statusTable, 0, 0, "PSM V4", bgcolor=color.new(color.purple, 45), text_color=color.white)
+    table.cell(statusTable, 0, 0, "PSM V5.4.1 RETEST", bgcolor=color.new(color.purple, 45), text_color=color.white)
     table.cell(statusTable, 1, 0, syminfo.ticker + " " + timeframe.period, bgcolor=color.new(color.purple, 45), text_color=color.white)
     table.cell(statusTable, 0, 1, "Structure", text_color=color.white)
     table.cell(statusTable, 1, 1, stateText, text_color=color.white)
@@ -529,8 +529,11 @@ if tradingMode and showPanel and barstate.islast
     table.cell(statusTable, 1, 4, decisionText, text_color=color.white)
     table.cell(statusTable, 0, 5, "SL / Entry", text_color=color.white)
     table.cell(statusTable, 1, 5, na(entry) ? "—" : str.tostring(stop, format.mintick) + " / " + str.tostring(entry, format.mintick), text_color=color.white)
-    table.cell(statusTable, 0, 6, "Disclaimer", text_color=color.silver)
-    table.cell(statusTable, 1, 6, "Rules-based / test first", text_color=color.silver)
+    retestText = not protectEntries ? "OFF (ORIGINAL ENTRY)" : pendingRetestSide == 1 ? "AWAIT BUY RETEST" : pendingRetestSide == -1 ? "AWAIT SELL RETEST" : "WAIT FOR BREAKOUT"
+    table.cell(statusTable, 0, 6, "Entry protection", text_color=color.white)
+    table.cell(statusTable, 1, 6, retestText, text_color=protectEntries ? color.yellow : color.silver)
+    table.cell(statusTable, 0, 7, "Disclaimer", text_color=color.silver)
+    table.cell(statusTable, 1, 7, "Rules-based / test first", text_color=color.silver)
 
 
 // =====================================================================
