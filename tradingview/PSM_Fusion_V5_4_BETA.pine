@@ -190,10 +190,10 @@ qOppLow = ta.lowest(low[1], 80)
 qLongRoom = not na(qOppHigh) and (qOppHigh <= close or qOppHigh - close >= riskLong * rr1)
 qShortRoom = not na(qOppLow) and (qOppLow >= close or close - qOppLow >= riskShort * rr1)
 
-qLongScore = (htfBull and htfValid ? 20 : 0) + (breakUp ? 20 : 0) +
+qLongScore = (useHTF and htfBull and htfValid ? 20 : 0) + (breakUp ? 20 : 0) +
      (qLongSweep ? 15 : 0) + (qLongOBProxy ? 15 : 0) + (qLongFVGProxy ? 10 : 0) +
      (qATRPass ? 10 : 0) + (qLongRoom ? 10 : 0)
-qShortScore = (htfBear and htfValid ? 20 : 0) + (breakDown ? 20 : 0) +
+qShortScore = (useHTF and htfBear and htfValid ? 20 : 0) + (breakDown ? 20 : 0) +
      (qShortSweep ? 15 : 0) + (qShortOBProxy ? 15 : 0) + (qShortFVGProxy ? 10 : 0) +
      (qATRPass ? 10 : 0) + (qShortRoom ? 10 : 0)
 f_qGrade(int score) =>
@@ -375,7 +375,7 @@ if tradingMode and showQualityPanel and barstate.islast
     table.cell(qTable, 0, 0, "V5.4 BETA / " + qTag, text_color=color.white, bgcolor=color.new(color.purple, 45))
     table.cell(qTable, 1, 0, qGrade + " " + str.tostring(qScore) + "/100", text_color=color.white, bgcolor=color.new(color.purple, 45))
     table.cell(qTable, 0, 1, "HTF / break", text_color=color.white)
-    table.cell(qTable, 1, 1, (qDirectionLong ? htfBull : htfBear) and htfValid ? "HTF YES" : "HTF NO", text_color=color.white)
+    table.cell(qTable, 1, 1, not useHTF ? "DISABLED" : (qDirectionLong ? htfBull : htfBear) and htfValid ? "HTF YES" : "HTF NO", text_color=color.white)
     table.cell(qTable, 0, 2, "Recent sweep / OB proxy", text_color=color.white)
     table.cell(qTable, 1, 2, (qSweep ? "Y" : "N") + " / " + (qOB ? "Y" : "N"), text_color=color.white)
     table.cell(qTable, 0, 3, "FVG / ATR suitability", text_color=color.white)
@@ -693,8 +693,9 @@ alertcondition(stockRiskAlert, "PSM Stock Investor risk warning", "PSM Stock Inv
 qCryptoVolSpike = investOK and investATR > investATRavg * 1.5
 qCryptoBroken = investOK and investClose < investHardBottom
 qStockVolSpike = stockOK and stockATR > stockATRAvg * 1.5
+qGapAtr = ta.atr(14)
 qStockGap = stockOK and not na(close[1]) and not na(open) and
-     math.abs(open - close[1]) > nz(ta.atr(14), 0) * 0.75
+     math.abs(open - close[1]) > nz(qGapAtr, 0) * 0.75
 var table qInvestorTable = table.new(position.bottom_left, 2, 5, border_width=1)
 if showInvestorIntelligence and (investorMode or stockInvestorMode) and barstate.islast
     qIsCrypto = investorMode
