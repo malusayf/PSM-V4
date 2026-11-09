@@ -183,7 +183,7 @@ qShortFVGProxy = not na(qBearFvgAge) and qBearFvgAge <= fvgFreshBars and high < 
 
 qAtrMean = ta.sma(atr, 20)
 qATRPass = not na(qAtrMean) and qAtrMean > 0 and
-    atr >= qAtrMean * atrLowRatio and atr <= qAtrMean * atrHighRatio
+     atr >= qAtrMean * atrLowRatio and atr <= qAtrMean * atrHighRatio
 // Opposing recent high/low is only a potential nearby obstacle; not an executable TP.
 qOppHigh = ta.highest(high[1], 80)
 qOppLow = ta.lowest(low[1], 80)
@@ -191,11 +191,11 @@ qLongRoom = not na(qOppHigh) and (qOppHigh <= close or qOppHigh - close >= riskL
 qShortRoom = not na(qOppLow) and (qOppLow >= close or close - qOppLow >= riskShort * rr1)
 
 qLongScore = (htfBull and htfValid ? 20 : 0) + (breakUp ? 20 : 0) +
-    (qLongSweep ? 15 : 0) + (qLongOBProxy ? 15 : 0) + (qLongFVGProxy ? 10 : 0) +
-    (qATRPass ? 10 : 0) + (qLongRoom ? 10 : 0)
+     (qLongSweep ? 15 : 0) + (qLongOBProxy ? 15 : 0) + (qLongFVGProxy ? 10 : 0) +
+     (qATRPass ? 10 : 0) + (qLongRoom ? 10 : 0)
 qShortScore = (htfBear and htfValid ? 20 : 0) + (breakDown ? 20 : 0) +
-    (qShortSweep ? 15 : 0) + (qShortOBProxy ? 15 : 0) + (qShortFVGProxy ? 10 : 0) +
-    (qATRPass ? 10 : 0) + (qShortRoom ? 10 : 0)
+     (qShortSweep ? 15 : 0) + (qShortOBProxy ? 15 : 0) + (qShortFVGProxy ? 10 : 0) +
+     (qATRPass ? 10 : 0) + (qShortRoom ? 10 : 0)
 f_qGrade(int score) =>
     score >= 90 ? "A+" : score >= 75 ? "A" : score >= 60 ? "B" : "REJECT"
 qMinimumScore = minQuality == "A+" ? 90 : minQuality == "A" ? 75 : 60
@@ -213,9 +213,9 @@ qSmartShortValid = not na(atr) and atr > 0 and qSmartShortRisk > syminfo.mintick
 var int lastSignalBar = na
 ready = na(lastSignalBar) or bar_index - lastSignalBar > cooldown
 longSignal = tradingMode and barstate.isconfirmed and ready and htfValid and localBull and htfBull and breakUp and longRiskOK and
-    (not qualityEnabled or qLongApproved) and (not useSmartStops or qSmartLongValid)
+     (not qualityEnabled or qLongApproved) and (not useSmartStops or qSmartLongValid)
 shortSignal = tradingMode and barstate.isconfirmed and ready and htfValid and localBear and htfBear and breakDown and shortRiskOK and
-    (not qualityEnabled or qShortApproved) and (not useSmartStops or qSmartShortValid)
+     (not qualityEnabled or qShortApproved) and (not useSmartStops or qSmartShortValid)
 
 // One active reference plan at a time, frozen at original signal levels.
 // Signal levels are illustrations, not order placement or fill confirmations.
@@ -694,7 +694,7 @@ qCryptoVolSpike = investOK and investATR > investATRavg * 1.5
 qCryptoBroken = investOK and investClose < investHardBottom
 qStockVolSpike = stockOK and stockATR > stockATRAvg * 1.5
 qStockGap = stockOK and not na(close[1]) and not na(open) and
-    math.abs(open - close[1]) > nz(ta.atr(14), 0) * 0.75
+     math.abs(open - close[1]) > nz(ta.atr(14), 0) * 0.75
 var table qInvestorTable = table.new(position.bottom_left, 2, 5, border_width=1)
 if showInvestorIntelligence and (investorMode or stockInvestorMode) and barstate.islast
     qIsCrypto = investorMode
