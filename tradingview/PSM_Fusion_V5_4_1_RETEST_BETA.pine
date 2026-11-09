@@ -273,12 +273,14 @@ qSmartShortValid = not na(atr) and atr > 0 and qSmartShortRisk > syminfo.mintick
 var int pendingRetestSide = 0
 var int pendingRetestBar = na
 var float pendingRetestLevel = na
+// Protect test mode does not replace an existing open trade plan.
+var int side = 0
 var int lastSignalBar = na
 ready = na(lastSignalBar) or bar_index - lastSignalBar > cooldown
 
 // Preserve old Trading signals exactly when the new retest switch is OFF.
-baseLong = tradingMode and barstate.isconfirmed and ready and htfValid and (not autoTimeframes or autoHigherValid) and localBull and htfBull and breakUp and longRiskOK
-baseShort = tradingMode and barstate.isconfirmed and ready and htfValid and (not autoTimeframes or autoHigherValid) and localBear and htfBear and breakDown and shortRiskOK
+baseLong = tradingMode and barstate.isconfirmed and ready and (not protectEntries or side == 0) and htfValid and (not autoTimeframes or autoHigherValid) and localBull and htfBull and breakUp and longRiskOK
+baseShort = tradingMode and barstate.isconfirmed and ready and (not protectEntries or side == 0) and htfValid and (not autoTimeframes or autoHigherValid) and localBear and htfBear and breakDown and shortRiskOK
 
 retestAge = bar_index - nz(pendingRetestBar, bar_index)
 pendingLong = protectEntries and pendingRetestSide == 1 and retestAge > 0 and retestAge <= retestWindow
@@ -299,8 +301,8 @@ retestShortRisk = not na(atr) and atr > 0 and riskShort <= protectedMaxRiskATR *
 // A confirmed PRIOR breakout earns the structural 20 points on its later retest.
 retestLongGrade = qLongScore + (pendingLong and not breakUp ? 20 : 0)
 retestShortGrade = qShortScore + (pendingShort and not breakDown ? 20 : 0)
-longGate = protectEntries ? (retestLongConfirmed and retestLongTrend and retestLongStretch and retestLongRisk and ready) : baseLong
-shortGate = protectEntries ? (retestShortConfirmed and retestShortTrend and retestShortStretch and retestShortRisk and ready) : baseShort
+longGate = protectEntries ? (retestLongConfirmed and retestLongTrend and retestLongStretch and retestLongRisk and ready and side == 0) : baseLong
+shortGate = protectEntries ? (retestShortConfirmed and retestShortTrend and retestShortStretch and retestShortRisk and ready and side == 0) : baseShort
 
 longSignal = tradingMode and barstate.isconfirmed and htfValid and (not autoTimeframes or autoHigherValid) and longGate and
      (not qualityEnabled or (protectEntries ? retestLongGrade >= qMinimumScore : qLongApproved)) and (not useSmartStops or qSmartLongValid)
@@ -328,7 +330,6 @@ if barstate.isconfirmed and tradingMode and protectEntries
 
 // One active reference plan at a time, frozen at original signal levels.
 // Signal levels are illustrations, not order placement or fill confirmations.
-var int side = 0
 var float entry = na
 var float stop = na
 var float tp1 = na
