@@ -17,6 +17,33 @@ Working v5.3 remains at [PSM_Fusion_V5.pine](./PSM_Fusion_V5.pine) and was not c
 9. Enable **Display crypto/stock additional risk flags** optionally. This changes only a new note panel, not investment decisions.
 10. Test alerts, confirm all accepted Trading signals occur at bar close, reload chart and compare signal timestamps; use Bar Replay and paper-forward logs.
 
+
+## Automatic timeframes — added November 2026
+In TradingView indicator settings, open **V5.4 Beta / Automatic Timeframes** and switch on **AUTO analysis timeframe for all modes**. This is **OFF by default** to keep v5.3 chart behavior and alert timing unchanged until you choose to use it. Turn it OFF any time to use the original manual `Higher timeframe`, `Investor analysis timeframe`, and `Stock analysis timeframe` inputs.
+
+**Auto selection on standard charts:**
+
+| Chart timeframe | PSM Trading AUTO | Crypto Investor AUTO | Stock Investor AUTO |
+| --- | --- | --- | --- |
+| 30 seconds | 5m | 1D | 1W |
+| 1 minute | 15m | 1D | 1W |
+| 5 minutes | 1H | 1D | 1W |
+| 15 minutes | 1H | 1D | 1W |
+| 1 hour | 4H | 1D | 1W |
+| 2 hours | 4H | 1D | 1W |
+| 4 hours | 1D | 1D | 1W |
+| 1 day | 1W | 1W | 1W |
+| 1 week | 1 month | 1 month | 1 month |
+| 1 month | 3 months | 3 months | 3 months |
+| 3 months | 12 months | 12 months | 12 months |
+| 12 months | **No valid AUTO higher timeframe** | **No valid AUTO higher timeframe** | **No valid AUTO higher timeframe** |
+
+The mode's analysis timeframe must be **strictly higher** than the chart. AUTO mode refuses signals on a 12-month chart, unknown-resolution chart, or a non-standard/synthetic-price chart (e.g. Heikin Ashi or Renko). Change to regular candles at an eligible timeframe instead. Investor modes still enforce original asset checks: crypto symbols for Crypto Investor and stock/fund symbols for Stock Investor. AUTO **does not make every asset fit every mode**, provide future market data, or ensure profitability.
+
+The automatic selection uses the chart's duration only. Trading `request.security` reads the previous completed higher-TF close and EMA; investor `request.security` likewise reads previous completed investor bars. AUTO investor event alerts additionally require a chart bar close. Price-zone projections, chart trade references and actual broker fills remain distinct.
+
+**Verification still required:** Compile in TradingView, test the auto toggle and effective TF labels at each timeframe, compare AUTO OFF with v5.3 for the same symbol/inputs and verify that AUTO ON blocks synthetic charts and 12M. Refresh/replay to check stable confirmed HTF behavior. If TradingView reports an error, capture the exact editor message and line number. No Pine compiler was available in the GitHub editing environment.
+
 ## Retained defaults
 - Trading mode: 21/55 EMA, RSI, completed HTF confirmation, swing-break entry and ATR/structure stop; targets 1R, 2R, 3R.
 - Crypto Investor: confirmed daily 50/200 EMA/risk regions and existing zones.
